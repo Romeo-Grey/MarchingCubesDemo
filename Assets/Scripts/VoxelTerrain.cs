@@ -5,13 +5,16 @@ using UnityEngine;
 public class VoxelTerrain : MonoBehaviour
 {
     public int chunkSize = 16; // Size of each chunk
+    public float voxelSize = 0.5f; // Smaller size increases resolution
     public float[,,] voxelData; // 3D array to store voxel data
     public MeshFilter meshFilter; // Reference to the MeshFilter component
     public bool useMarchingCubes = true; // Enable marching cubes visualization
     public float isoLevel = 0.5f; // Iso level for marching cubes
     public bool useMarchDelay; // Whether to use marching delay
     public float marchSpeedInSeconds = 0.5f; // Speed of marching
-
+    public bool drawNoiseGizmos = true; // Toggle to visualize the noise
+    public Color groundColor = Color.green; // Color for ground gizmos
+    public Color airColor = Color.blue; // Color for air gizmos
     private Mesh mesh; // Mesh for the marching cubes
 
     void Start()
@@ -29,16 +32,57 @@ public class VoxelTerrain : MonoBehaviour
         // Initialize the voxel data array
         voxelData = new float[chunkSize, chunkSize, chunkSize];
 
-        // Simple flat terrain generation with noise
+        // Simple flat terrain generation with multiple noise octaves
         for (int x = 0; x < chunkSize; x++)
         {
             for (int y = 0; y < chunkSize; y++)
             {
                 for (int z = 0; z < chunkSize; z++)
                 {
-                    // For simplicity, we use Perlin noise to generate a basic terrain heightmap
-                    float height = Mathf.PerlinNoise(x * 0.1f, z * 0.1f) * 10f;
+                    float noiseValue = 0;
+                    float amplitude = 1f;
+                    float frequency = 0.1f;
+
+                    // Generate noise with multiple octaves
+                    for (int octave = 0; octave < 4; octave++)
+                    {
+                        noiseValue += Mathf.PerlinNoise(x * frequency, z * frequency) * amplitude;
+                        amplitude *= 0.5f;  // Decrease amplitude for finer details
+                        frequency *= 2f;    // Increase frequency for finer details
+                    }
+
+                    // Calculate height based on the noise value
+                    float height = noiseValue * 10f;
+
+                    // Fill voxel data based on height
                     voxelData[x, y, z] = y < height ? 1 : 0; // Solid ground below the noise height, air above
+                }
+            }
+        }
+    }
+
+    // Gizmo visualization of the noise
+    void OnDrawGizmos()
+    {
+        if (!drawNoiseGizmos || voxelData == null) return;
+
+        for (int x = 0; x < chunkSize; x++)
+        {
+            for (int y = 0; y < chunkSize; y++)
+            {
+                for (int z = 0; z < chunkSize; z++)
+                {
+                    Vector3 worldPos = new Vector3(x, y, z) * voxelSize;
+                    if (voxelData[x, y, z] > 0) // Ground voxel
+                    {
+                        Gizmos.color = groundColor;
+                    }
+                    else // Air voxel
+                    {
+                        Gizmos.color = airColor;
+                    }
+
+                    Gizmos.DrawSphere(worldPos, voxelSize * 0.25f); // Draw spheres for visualization
                 }
             }
         }
@@ -83,7 +127,7 @@ public class VoxelTerrain : MonoBehaviour
                     // Get the intersecting edges
                     int[] edges = MarchingCubesTables.triTable[cubeIndex];
 
-                    Vector3 worldPos = new Vector3(x, y, z);
+                    Vector3 worldPos = new Vector3(x, y, z) * voxelSize;
 
                     // Triangulate
                     for (int i = 0; edges[i] != -1; i += 3)
