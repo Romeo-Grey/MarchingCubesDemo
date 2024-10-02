@@ -4,17 +4,19 @@ using UnityEngine;
 
 public class VoxelTerrain : MonoBehaviour
 {
-    public int chunkSize = 16; // Size of each chunk
-    public float voxelSize = 0.5f; // Smaller size increases resolution
+    public int chunkSize = 32; // Increased chunk size for more detail
     public float[,,] voxelData; // 3D array to store voxel data
     public MeshFilter meshFilter; // Reference to the MeshFilter component
     public bool useMarchingCubes = true; // Enable marching cubes visualization
     public float isoLevel = 0.5f; // Iso level for marching cubes
-    public bool useMarchDelay; // Whether to use marching delay
-    public float marchSpeedInSeconds = 0.5f; // Speed of marching
-    public bool drawNoiseGizmos = true; // Toggle to visualize the noise
-    public Color groundColor = Color.green; // Color for ground gizmos
-    public Color airColor = Color.blue; // Color for air gizmos
+
+    // Perlin noise parameters
+    public float noiseScale = 5f; // Decrease scale for finer detail
+    public int octaves = 4;        // Number of noise layers
+    public float persistence = 0.5f; // Controls the amplitude of each octave
+    public float lacunarity = 2f;  // Controls the frequency of each octave
+    public Vector2 offset;         // Offset for random terrain variation
+
     private Mesh mesh; // Mesh for the marching cubes
 
     void Start()
@@ -32,63 +34,77 @@ public class VoxelTerrain : MonoBehaviour
         // Initialize the voxel data array
         voxelData = new float[chunkSize, chunkSize, chunkSize];
 
-        // Simple flat terrain generation with multiple noise octaves
+        // Generate voxel data with configurable Perlin noise
         for (int x = 0; x < chunkSize; x++)
         {
-            for (int y = 0; y < chunkSize; y++)
+            for (int z = 0; z < chunkSize; z++)
             {
-                for (int z = 0; z < chunkSize; z++)
+                // Generate height based on configurable Perlin noise
+                float height = GeneratePerlinNoise(x, z) * 10f; // Adjust amplitude for height
+                for (int y = 0; y < chunkSize; y++)
                 {
-                    float noiseValue = 0;
-                    float amplitude = 1f;
-                    float frequency = 0.1f;
-
-                    // Generate noise with multiple octaves
-                    for (int octave = 0; octave < 4; octave++)
-                    {
-                        noiseValue += Mathf.PerlinNoise(x * frequency, z * frequency) * amplitude;
-                        amplitude *= 0.5f;  // Decrease amplitude for finer details
-                        frequency *= 2f;    // Increase frequency for finer details
-                    }
-
-                    // Calculate height based on the noise value
-                    float height = noiseValue * 10f;
-
-                    // Fill voxel data based on height
-                    voxelData[x, y, z] = y < height ? 1 : 0; // Solid ground below the noise height, air above
+                    // Use a smoother transition based on height
+                    voxelData[x, y, z] = (y < height) ? 1f : 0f;
                 }
             }
         }
+
+        // Optional: Apply a smoothing algorithm here to smooth the terrain
+        SmoothTerrain();
     }
 
-    // Gizmo visualization of the noise
-    void OnDrawGizmos()
+    float GeneratePerlinNoise(float x, float z)
     {
-        if (!drawNoiseGizmos || voxelData == null) return;
+        float total = 0f;
+        float frequency = 1f;
+        float amplitude = 1f;
+        float maxValue = 0f; // Used to normalize result to 0-1
 
-        for (int x = 0; x < chunkSize; x++)
+        for (int i = 0; i < octaves; i++)
         {
-            for (int y = 0; y < chunkSize; y++)
-            {
-                for (int z = 0; z < chunkSize; z++)
-                {
-                    Vector3 worldPos = new Vector3(x, y, z) * voxelSize;
-                    if (voxelData[x, y, z] > 0) // Ground voxel
-                    {
-                        Gizmos.color = groundColor;
-                    }
-                    else // Air voxel
-                    {
-                        Gizmos.color = airColor;
-                    }
+            float sampleX = (x + offset.x) / noiseScale * frequency;
+            float sampleZ = (z + offset.y) / noiseScale * frequency;
 
-                    Gizmos.DrawSphere(worldPos, voxelSize * 0.25f); // Draw spheres for visualization
+            float noiseValue = Mathf.PerlinNoise(sampleX, sampleZ) * 2 - 1; // Map from [0,1] to [-1,1]
+            total += noiseValue * amplitude;
+
+            maxValue += amplitude;
+
+            amplitude *= persistence;
+            frequency *= lacunarity;
+        }
+
+        return (total / maxValue + 1) / 2; // Normalize to [0,1]
+    }
+
+    // Smooth the terrain by averaging values of adjacent voxels
+    void SmoothTerrain()
+    {
+        float[,,] smoothedData = new float[chunkSize, chunkSize, chunkSize];
+
+        for (int x = 1; x < chunkSize - 1; x++)
+        {
+            for (int y = 1; y < chunkSize - 1; y++)
+            {
+                for (int z = 1; z < chunkSize - 1; z++)
+                {
+                    // Average the values of the surrounding voxels
+                    float average = (
+                        voxelData[x - 1, y, z] +
+                        voxelData[x + 1, y, z] +
+                        voxelData[x, y - 1, z] +
+                        voxelData[x, y + 1, z] +
+                        voxelData[x, y, z - 1] +
+                        voxelData[x, y, z + 1]) / 6f;
+
+                    smoothedData[x, y, z] = average;
                 }
             }
         }
+
+        voxelData = smoothedData; // Replace original voxel data with smoothed data
     }
 
-    // Marching cubes algorithm
     IEnumerator March()
     {
         List<Vector3> vertices = new List<Vector3>();
@@ -100,7 +116,6 @@ public class VoxelTerrain : MonoBehaviour
             {
                 for (int z = 0; z < chunkSize - 1; z++)
                 {
-                    // Set values at the corners of the cube
                     float[] cubeValues = new float[]
                     {
                         voxelData[x, y, z + 1],
@@ -113,7 +128,6 @@ public class VoxelTerrain : MonoBehaviour
                         voxelData[x, y + 1, z]
                     };
 
-                    // Find the triangulation index
                     int cubeIndex = 0;
                     if (cubeValues[0] < isoLevel) cubeIndex |= 1;
                     if (cubeValues[1] < isoLevel) cubeIndex |= 2;
@@ -124,20 +138,16 @@ public class VoxelTerrain : MonoBehaviour
                     if (cubeValues[6] < isoLevel) cubeIndex |= 64;
                     if (cubeValues[7] < isoLevel) cubeIndex |= 128;
 
-                    // Get the intersecting edges
                     int[] edges = MarchingCubesTables.triTable[cubeIndex];
 
-                    Vector3 worldPos = new Vector3(x, y, z) * voxelSize;
+                    Vector3 worldPos = new Vector3(x, y, z);
 
-                    // Triangulate
                     for (int i = 0; edges[i] != -1; i += 3)
                     {
                         int e00 = MarchingCubesTables.edgeConnections[edges[i]][0];
                         int e01 = MarchingCubesTables.edgeConnections[edges[i]][1];
-
                         int e10 = MarchingCubesTables.edgeConnections[edges[i + 1]][0];
                         int e11 = MarchingCubesTables.edgeConnections[edges[i + 1]][1];
-
                         int e20 = MarchingCubesTables.edgeConnections[edges[i + 2]][0];
                         int e21 = MarchingCubesTables.edgeConnections[edges[i + 2]][1];
 
@@ -151,18 +161,15 @@ public class VoxelTerrain : MonoBehaviour
             }
         }
 
-        // Update mesh with vertices and triangles
         mesh.Clear();
         mesh.SetVertices(vertices);
         mesh.SetTriangles(triangles, 0);
         mesh.RecalculateNormals();
         meshFilter.mesh = mesh;
 
-        if (useMarchDelay)
-        {
-            yield return new WaitForSeconds(marchSpeedInSeconds);
-        }
-    }
+        yield break; // Ends the coroutine without returning a value
+}
+
 
     void AddTriangle(List<Vector3> vertices, List<int> triangles, Vector3 a, Vector3 b, Vector3 c)
     {
